@@ -1,0 +1,540 @@
+openapi: "3.0.3"
+info:
+  title: Cake Shop API
+  version: "1.0.0"
+  description: |
+    RESTful API for the Cake Shop online ordering platform.
+    Authentication uses JWT tokens passed via the `Authorization: Bearer <token>` header
+    or an HTTP-only `auth_token` cookie.
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+tags:
+  - name: Auth
+    description: Registration and OTP verification
+  - name: Products
+    description: Product catalog (public)
+  - name: Categories
+    description: Product categories (public)
+  - name: Cart
+    description: Shopping cart management (authenticated)
+  - name: Orders
+    description: Order management (authenticated)
+
+paths:
+  # ─── Auth ────────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: Creates an unverified account and sends an OTP to the provided email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  /auth/verify-otp:
+    post:
+      tags: [Auth]
+      summary: Verify OTP and sign in
+      description: Verifies the OTP sent by email, marks account as verified, and returns a JWT token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyOTPRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /auth/resend-otp:
+    post:
+      tags: [Auth]
+      summary: Resend OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: OTP resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessMessage"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+
+  # ─── Products ─────────────────────────────────────────────────────────────────
+  /products:
+    get:
+      tags: [Products]
+      summary: List products
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: category_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [price_asc, price_desc]
+      responses:
+        "200":
+          description: Paginated product list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaginatedProducts"
+
+  /products/{id}:
+    get:
+      tags: [Products]
+      summary: Get a product by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Product details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Product"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ─── Categories ───────────────────────────────────────────────────────────────
+  /categories:
+    get:
+      tags: [Categories]
+      summary: List all categories
+      responses:
+        "200":
+          description: Category list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Category"
+
+  # ─── Cart ─────────────────────────────────────────────────────────────────────
+  /cart:
+    get:
+      tags: [Cart]
+      summary: Get the authenticated user's cart
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Cart contents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    delete:
+      tags: [Cart]
+      summary: Clear all items from the cart
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        "200":
+          description: Cart cleared
+
+  /cart/items:
+    post:
+      tags: [Cart]
+      summary: Add an item to the cart
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCartItemRequest"
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Cart"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /cart/items/{itemId}:
+    put:
+      tags: [Cart]
+      summary: Update cart item quantity
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: Updated cart
+    delete:
+      tags: [Cart]
+      summary: Remove a cart item
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Updated cart
+
+  # ─── Orders ───────────────────────────────────────────────────────────────────
+  /orders:
+    post:
+      tags: [Orders]
+      summary: Create a new order from cart
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: Order created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    get:
+      tags: [Orders]
+      summary: List orders for the authenticated user
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 10 }
+      responses:
+        "200":
+          description: Paginated order list
+
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Get a specific order
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Order details
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: auth_token
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [first_name, last_name, phone_number, email]
+      properties:
+        first_name: { type: string, example: "John" }
+        last_name: { type: string, example: "Doe" }
+        phone_number: { type: string, example: "+12025551234" }
+        email: { type: string, format: email, example: "john@example.com" }
+
+    VerifyOTPRequest:
+      type: object
+      required: [email, otp]
+      properties:
+        email: { type: string, format: email }
+        otp: { type: string, minLength: 6, maxLength: 6, example: "483921" }
+
+    AuthResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            token: { type: string }
+            user:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                first_name: { type: string }
+                last_name: { type: string }
+                email: { type: string }
+                phone: { type: string }
+
+    Product:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        category_id: { type: string, format: uuid, nullable: true }
+        category_name: { type: string, nullable: true }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        price: { type: number, format: double }
+        image_url: { type: string, nullable: true }
+        stock_quantity: { type: integer }
+        is_active: { type: boolean }
+
+    PaginatedProducts:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+        total_pages: { type: integer }
+
+    Category:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { type: string }
+
+    CartItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        product_id: { type: string, format: uuid }
+        product_name: { type: string }
+        product_image_url: { type: string, nullable: true }
+        price: { type: number }
+        quantity: { type: integer }
+        subtotal: { type: number }
+
+    Cart:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+        total: { type: number }
+
+    AddCartItemRequest:
+      type: object
+      required: [product_id, quantity]
+      properties:
+        product_id: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1 }
+
+    CreateOrderRequest:
+      type: object
+      required: [delivery_address, delivery_date, payment_method]
+      properties:
+        delivery_address: { type: string, example: "123 Main St, City, State" }
+        delivery_date: { type: string, format: date-time, example: "2024-12-25T10:00:00Z" }
+        notes: { type: string, example: "Happy Birthday!" }
+        payment_method:
+          type: string
+          enum: [cash_on_delivery]
+          default: cash_on_delivery
+
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        delivery_address: { type: string }
+        delivery_date: { type: string, format: date-time }
+        notes: { type: string, nullable: true }
+        payment_method: { type: string }
+        status:
+          type: string
+          enum: [pending, confirmed, preparing, delivered, cancelled]
+        total_amount: { type: number }
+        items:
+          type: array
+          items:
+            type: object
+        created_at: { type: string, format: date-time }
+
+    SuccessEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data: {}
+
+    SuccessMessage:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            message: { type: string }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error: { type: string }
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnprocessableEntity:
+      description: OTP validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
